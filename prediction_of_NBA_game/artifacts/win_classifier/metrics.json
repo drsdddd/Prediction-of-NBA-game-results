@@ -1,0 +1,29 @@
+{
+  "best_epoch": 2,
+  "best_val_loss": 0.6052523127123087,
+  "best_threshold": 0.4187999963760376,
+  "best_val_accuracy_at_threshold": 0.6823529411764706,
+  "num_features": 68,
+  "train_size": 10765,
+  "val_size": 595,
+  "test_size": 602,
+  "task_type": "win_classification",
+  "val_metrics_default_threshold": {
+    "accuracy": 0.6554621848739496,
+    "log_loss": 0.6052522971115237,
+    "threshold": 0.5,
+    "roc_auc": 0.7222852774946725
+  },
+  "val_metrics": {
+    "accuracy": 0.6823529411764706,
+    "log_loss": 0.6052522971115237,
+    "threshold": 0.4187999963760376,
+    "roc_auc": 0.7222852774946725
+  },
+  "test_metrics": {
+    "accuracy": 0.6478405315614618,
+    "log_loss": 0.627204731102492,
+    "threshold": 0.4187999963760376,
+    "roc_auc": 0.6999720498630444
+  }
+}

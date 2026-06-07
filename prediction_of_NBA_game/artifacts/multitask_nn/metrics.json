@@ -1,20 +1,21 @@
 {
   "best_epoch": 4,
-  "best_val_loss": 1.133899373915589,
-  "num_features": 29,
-  "train_size": 960,
-  "val_size": 206,
-  "test_size": 206,
+  "best_val_loss": 0.7619941640300911,
+  "num_features": 68,
+  "train_size": 10765,
+  "val_size": 595,
+  "test_size": 602,
+  "task_type": "single_task_margin_regression",
   "val_metrics": {
-    "accuracy": 0.5825242718446602,
-    "mae": 11.778284398341569,
-    "rmse": 14.919484846024949,
-    "roc_auc": 0.6606317774634606
+    "accuracy": 0.6756302521008404,
+    "mae": 9.692977215590096,
+    "rmse": 12.396399567664162,
+    "roc_auc": 0.7321064578893728
   },
   "test_metrics": {
-    "accuracy": 0.5970873786407767,
-    "mae": 12.527660279932604,
-    "rmse": 15.840165531670117,
-    "roc_auc": 0.6053010659752233
+    "accuracy": 0.6627906976744186,
+    "mae": 11.050442837041716,
+    "rmse": 14.217737478855412,
+    "roc_auc": 0.6970093353457432
   }
 }

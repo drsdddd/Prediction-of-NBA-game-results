@@ -3,47 +3,44 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
+from nba_nn.classification_utils import (
+    compute_classification_metrics,
+    compute_classification_metrics_with_threshold,
+    find_best_accuracy_threshold,
+    predict_classification,
+    run_classification_epoch,
+)
 from nba_nn.data import (
     NBAGameDataset,
-    build_feature_frame,
     build_category_maps,
+    build_feature_frame,
     fit_scalers,
     load_processed_games,
-    seasonwise_time_split,
     save_preprocessors,
+    seasonwise_time_split,
     transform_split,
 )
-from nba_nn.model import MarginNBAPredictor
-from nba_nn.train_utils import compute_metrics, predict, run_epoch
+from nba_nn.model import WinNBAPredictor
 
 
 DATA_PATH = Path("data_preparation/data/processed/features_multi_seasons.csv")
-ARTIFACT_DIR = Path("artifacts/multitask_nn")
+ARTIFACT_DIR = Path("artifacts/win_classifier")
 
-# Training hyperparameters live here so experiments are easy to compare.
 TRAIN_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 128
-HIDDEN_DIM = 128
-DROPOUT = 0.1
-LEARNING_RATE = 5e-4
-WEIGHT_DECAY = 1e-4
+HIDDEN_DIM = 64
+DROPOUT = 0.3
+LEARNING_RATE = 3e-4
+WEIGHT_DECAY = 5e-4
 LR_SCHEDULER_FACTOR = 0.5
-LR_SCHEDULER_PATIENCE = 8
+LR_SCHEDULER_PATIENCE = 5
 MAX_EPOCHS = 150
-EARLY_STOPPING_PATIENCE = 30
-
-
-def margin_to_win_prob(margin: np.ndarray) -> np.ndarray:
-    # Use the predicted margin as a ranking score and squash it to 0-1
-    # so downstream outputs keep the previous column format.
-    clipped_margin = np.clip(margin, -20.0, 20.0)
-    return 1.0 / (1.0 + np.exp(-clipped_margin))
+EARLY_STOPPING_PATIENCE = 15
 
 
 def main() -> None:
@@ -65,7 +62,7 @@ def main() -> None:
     test_loader = DataLoader(NBAGameDataset(test_split), batch_size=EVAL_BATCH_SIZE, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MarginNBAPredictor(
+    model = WinNBAPredictor(
         input_dim=len(feature_cols),
         num_home_teams=len(category_maps["TEAM_ID_HOME"]),
         num_away_teams=len(category_maps["TEAM_ID_AWAY"]),
@@ -87,13 +84,13 @@ def main() -> None:
     epochs_without_improvement = 0
 
     for epoch in range(1, MAX_EPOCHS + 1):
-        train_result = run_epoch(
+        train_result = run_classification_epoch(
             model=model,
             dataloader=train_loader,
             optimizer=optimizer,
             device=device,
         )
-        val_result = run_epoch(
+        val_result = run_classification_epoch(
             model=model,
             dataloader=val_loader,
             optimizer=None,
@@ -105,11 +102,7 @@ def main() -> None:
         print(
             f"Epoch {epoch:03d} | "
             f"train_loss={train_result.loss:.4f} "
-            f"val_loss={val_result.loss:.4f} "
-            f"train_win_loss={train_result.win_loss:.4f} "
-            f"val_win_loss={val_result.win_loss:.4f} "
-            f"train_margin_loss={train_result.margin_loss:.4f} "
-            f"val_margin_loss={val_result.margin_loss:.4f}"
+            f"val_loss={val_result.loss:.4f}"
         )
 
         if val_result.loss < best_val_loss:
@@ -138,31 +131,31 @@ def main() -> None:
             "num_away_teams": len(category_maps["TEAM_ID_AWAY"]),
             "hidden_dim": HIDDEN_DIM,
             "dropout": DROPOUT,
-            "task_type": "single_task_margin_regression",
+            "task_type": "win_classification",
         },
-        ARTIFACT_DIR / "multitask_model.pt",
+        ARTIFACT_DIR / "win_classifier_model.pt",
     )
     save_preprocessors(ARTIFACT_DIR, feature_scaler, margin_scaler, feature_cols, category_maps)
 
-    val_predictions = predict(model, val_loader, device)
-    test_predictions = predict(model, test_loader, device)
+    val_predictions = predict_classification(model, val_loader, device)
+    test_predictions = predict_classification(model, test_loader, device)
 
-    val_margin_pred = margin_scaler.inverse_transform(val_predictions["margin_preds"].reshape(-1, 1)).reshape(-1)
-    val_margin_true = val_df["TARGET_PLUS_MINUS_HOME"].values
-    test_margin_pred = margin_scaler.inverse_transform(test_predictions["margin_preds"].reshape(-1, 1)).reshape(-1)
-    test_margin_true = test_df["TARGET_PLUS_MINUS_HOME"].values
-
-    val_metrics = compute_metrics(val_predictions, val_margin_true, val_margin_pred)
-    test_metrics = compute_metrics(test_predictions, test_margin_true, test_margin_pred)
+    val_metrics_default = compute_classification_metrics(val_predictions)
+    best_threshold, best_val_accuracy = find_best_accuracy_threshold(val_predictions)
+    val_metrics = compute_classification_metrics_with_threshold(val_predictions, threshold=best_threshold)
+    test_metrics = compute_classification_metrics_with_threshold(test_predictions, threshold=best_threshold)
 
     metrics_payload = {
         "best_epoch": best_epoch,
         "best_val_loss": best_val_loss,
+        "best_threshold": best_threshold,
+        "best_val_accuracy_at_threshold": best_val_accuracy,
         "num_features": len(feature_cols),
         "train_size": len(train_df),
         "val_size": len(val_df),
         "test_size": len(test_df),
-        "task_type": "single_task_margin_regression",
+        "task_type": "win_classification",
+        "val_metrics_default_threshold": val_metrics_default,
         "val_metrics": val_metrics,
         "test_metrics": test_metrics,
     }
@@ -176,16 +169,15 @@ def main() -> None:
             "TEAM_ABBREVIATION_HOME",
             "TEAM_ABBREVIATION_AWAY",
             "TARGET_WIN_HOME",
-            "TARGET_PLUS_MINUS_HOME",
         ]
     ].copy()
-    test_preview["PRED_WIN_PROB_HOME"] = margin_to_win_prob(test_margin_pred)
-    test_preview["PRED_WIN_HOME"] = (test_margin_pred > 0).astype(int)
-    test_preview["PRED_PLUS_MINUS_HOME"] = test_margin_pred
+    test_preview["PRED_WIN_PROB_HOME"] = test_predictions["win_probs"]
+    test_preview["PRED_WIN_HOME"] = (test_predictions["win_probs"] >= best_threshold).astype(int)
     test_preview.to_csv(ARTIFACT_DIR / "test_predictions.csv", index=False)
 
     print("\nTraining finished.")
     print(f"Best epoch: {best_epoch}")
+    print(f"Best validation threshold: {best_threshold:.4f}")
     print(f"Validation metrics: {val_metrics}")
     print(f"Test metrics: {test_metrics}")
     print(f"Artifacts saved to: {ARTIFACT_DIR}")
